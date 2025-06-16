@@ -18,7 +18,6 @@ import { CandlestickController, CandlestickElement } from 'chartjs-chart-financi
 
 import 'chartjs-adapter-luxon';
 import { Subscription, Subject, filter } from 'rxjs';
-import { takeUntil } from 'rxjs/operators';
 
 Chart.register(...registerables);
 Chart.register(CandlestickController, CandlestickElement);
