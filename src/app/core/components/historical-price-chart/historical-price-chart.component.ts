@@ -3,10 +3,8 @@ import {
   Component,
   ElementRef,
   Input,
-  OnChanges,
   OnDestroy,
   OnInit,
-  SimpleChanges,
   ViewChild
 } from '@angular/core';
 import { Chart, ChartConfiguration, registerables, ChartType, TimeUnit, TimeScaleOptions } from 'chart.js';
@@ -31,23 +29,57 @@ Chart.register(CandlestickController, CandlestickElement);
   templateUrl: './historical-price-chart.component.html',
   styleUrls: ['./historical-price-chart.component.scss']
 })
-export class HistoricalPriceChartComponent implements OnInit, AfterViewInit, OnDestroy, OnChanges {
+export class HistoricalPriceChartComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('priceChartCanvas') priceChartCanvas!: ElementRef<HTMLCanvasElement>;
 
   private myChart!: ChartjsChart;
-  private currentPeriodicity: TimeUnit = 'minute';
-  private readonly NUMBER_OF_BARS = 20;
+  private _currentPeriodicity: TimeUnit = 'minute';
 
+  private readonly NUMBER_OF_BARS = 20;
   private wsPriceSubscription: Subscription | undefined;
   private destroy$ = new Subject<void>();
+
   private fetchBarsSubscription: Subscription | undefined;
-
-
   private currentOpenBar: ChartBarData | null = null;
+
   private pricePrecision: number = 2;
 
-  @Input() instrumentId: string | undefined;
-  @Input() initialPeriodicity: TimeUnit = 'minute';
+  private _instrumentId: string | undefined;
+  @Input()
+  set instrumentId(value: string | undefined) {
+    this._instrumentId = value;
+
+    if (this._instrumentId) {
+      this.fetchAndDisplayBars();
+    } else {
+      this.clearChartAndSubscriptions();
+    }
+  }
+
+  get instrumentId(): string | undefined {
+    return this._instrumentId;
+  }
+
+  private _initialPeriodicity: TimeUnit = 'minute';
+  @Input()
+  set initialPeriodicity(value: TimeUnit) {
+    const previousValue = this._initialPeriodicity;
+    this._initialPeriodicity = value;
+
+    if (value !== previousValue) {
+      this._currentPeriodicity = value;
+      const selectElement = document.getElementById('periodicitySelect') as HTMLSelectElement;
+      if (selectElement) {
+        selectElement.value = this._currentPeriodicity;
+      }
+      if (this.instrumentId) {
+        this.fetchAndDisplayBars();
+      }
+    }
+  }
+  get initialPeriodicity(): TimeUnit {
+    return this._initialPeriodicity;
+  }
 
   chartData: ChartBarData[] = [];
 
@@ -57,58 +89,32 @@ export class HistoricalPriceChartComponent implements OnInit, AfterViewInit, OnD
   ) { }
 
   ngOnInit(): void {
-    this.currentPeriodicity = this.initialPeriodicity;
+    this._currentPeriodicity = this._initialPeriodicity;
   }
 
   ngAfterViewInit(): void {
-    if (this.instrumentId) {
+    if (this._instrumentId && !this.myChart) {
       this.fetchAndDisplayBars();
     }
   }
 
-  ngOnChanges(changes: SimpleChanges): void {
-    if ((changes['instrumentId'] || changes['initialPeriodicity']) && this.instrumentId) {
-      if (changes['initialPeriodicity'] && changes['initialPeriodicity'].currentValue !== changes['initialPeriodicity'].previousValue) {
-        this.currentPeriodicity = changes['initialPeriodicity'].currentValue;
-        const selectElement = document.getElementById('periodicitySelect') as HTMLSelectElement;
-        if (selectElement) {
-          selectElement.value = this.currentPeriodicity;
-        }
-      }
-      this.fetchAndDisplayBars();
-    } else if (!this.instrumentId && this.myChart) {
-      if (this.myChart) {
-        this.myChart.destroy();
-        this.myChart = null as any;
-      }
-      this.chartData = [];
-      if (this.wsPriceSubscription) {
-        this.wsPriceSubscription.unsubscribe();
-        this.wsPriceSubscription = undefined;
-      }
-      if (this.fetchBarsSubscription) {
-        this.fetchBarsSubscription.unsubscribe();
-        this.fetchBarsSubscription = undefined;
-      }
-      this.wsService.disconnect();
-      this.currentOpenBar = null;
-    }
-  }
-
-  ngOnDestroy(): void {
+  private clearChartAndSubscriptions(): void {
     if (this.myChart) {
       this.myChart.destroy();
       this.myChart = null as any;
     }
+    this.chartData = [];
     if (this.wsPriceSubscription) {
       this.wsPriceSubscription.unsubscribe();
+      this.wsPriceSubscription = undefined;
     }
     if (this.fetchBarsSubscription) {
       this.fetchBarsSubscription.unsubscribe();
+      this.fetchBarsSubscription = undefined;
     }
     this.wsService.disconnect();
-    this.destroy$.next();
-    this.destroy$.complete();
+    this.currentOpenBar = null;
+    this.pricePrecision = 2;
   }
 
   private fetchAndDisplayBars(): void {
@@ -129,24 +135,18 @@ export class HistoricalPriceChartComponent implements OnInit, AfterViewInit, OnD
       this.myChart.update();
     }
 
-
     const currentAuthToken = localStorage.getItem('access_token');
 
-    if (!this.instrumentId || !currentAuthToken) {
-      if (this.myChart) {
-        this.myChart.destroy();
-        this.myChart = null as any;
-      }
-      this.chartData = [];
-      this.pricePrecision = 2;
+    if (!this._instrumentId || !currentAuthToken) {
+      this.clearChartAndSubscriptions();
       return;
     }
 
     this.fetchBarsSubscription = this.fintachartsService.getBars(
-      this.instrumentId,
+      this._instrumentId,
       currentAuthToken,
       1,
-      this.currentPeriodicity,
+      this._currentPeriodicity,
       this.NUMBER_OF_BARS
     ).subscribe({
       next: (response: FintachartsBarsResponse) => {
@@ -169,15 +169,12 @@ export class HistoricalPriceChartComponent implements OnInit, AfterViewInit, OnD
 
           this.currentOpenBar = this.chartData.length > 0 ? this.chartData[this.chartData.length - 1] : null;
 
-          this.startRealtimePriceUpdates(this.instrumentId!);
+          this.startRealtimePriceUpdates(this._instrumentId!);
         } else {
           console.error('[ChartComponent] The error: "data" in the API response is not an array:', response);
           this.chartData = [];
           this.pricePrecision = 2;
-          if (this.myChart) {
-            this.updateChartDataAndRedraw();
-          } else {
-          }
+          this.clearChartAndSubscriptions();
         }
         this.fetchBarsSubscription = undefined;
       },
@@ -185,10 +182,7 @@ export class HistoricalPriceChartComponent implements OnInit, AfterViewInit, OnD
         console.error('[ChartComponent] Error while obtaining historical bar data:', err);
         this.chartData = [];
         this.pricePrecision = 2;
-        if (this.myChart) {
-          this.updateChartDataAndRedraw();
-        } else {
-        }
+        this.clearChartAndSubscriptions();
         this.fetchBarsSubscription = undefined;
       }
     });
@@ -226,7 +220,7 @@ export class HistoricalPriceChartComponent implements OnInit, AfterViewInit, OnD
     const newPriceDateTime = DateTime.fromISO(timestamp);
 
     let currentBarPeriodStart: DateTime;
-    switch (this.currentPeriodicity) {
+    switch (this._currentPeriodicity) {
       case 'minute': currentBarPeriodStart = newPriceDateTime.startOf('minute'); break;
       case 'hour': currentBarPeriodStart = newPriceDateTime.startOf('hour'); break;
       case 'day': currentBarPeriodStart = newPriceDateTime.startOf('day'); break;
@@ -340,7 +334,7 @@ export class HistoricalPriceChartComponent implements OnInit, AfterViewInit, OnD
     const selectElement = event.target as HTMLSelectElement;
     const newPeriodicity = selectElement.value as TimeUnit;
 
-    this.currentPeriodicity = newPeriodicity;
+    this._currentPeriodicity = newPeriodicity;
 
     if (this.myChart) {
       this.myChart.destroy();
@@ -399,7 +393,7 @@ export class HistoricalPriceChartComponent implements OnInit, AfterViewInit, OnD
           x: {
             type: 'time',
             time: {
-              unit: this.currentPeriodicity,
+              unit: this._currentPeriodicity,
               tooltipFormat: 'yyyy-MM-dd HH:mm:ss',
               displayFormats: {
                 minute: 'HH:mm',
@@ -412,7 +406,7 @@ export class HistoricalPriceChartComponent implements OnInit, AfterViewInit, OnD
             },
             title: {
               display: true,
-              text: `Time (${this.currentPeriodicity === 'minute' ? 'Minute' : this.currentPeriodicity === 'hour' ? 'hour' : this.currentPeriodicity === 'day' ? 'Day' : this.currentPeriodicity === 'week' ? 'Week' : this.currentPeriodicity === 'month' ? 'Month' : 'Year'})`,
+              text: `Time (${this._currentPeriodicity === 'minute' ? 'Minute' : this._currentPeriodicity === 'hour' ? 'hour' : this._currentPeriodicity === 'day' ? 'Day' : this._currentPeriodicity === 'week' ? 'Week' : this._currentPeriodicity === 'month' ? 'Month' : 'Year'})`,
               font: { size: 14 }
             },
             ticks: {
@@ -463,5 +457,11 @@ export class HistoricalPriceChartComponent implements OnInit, AfterViewInit, OnD
     };
 
     this.myChart = new ChartjsChart(ctx, chartConfig as ChartConfiguration<'candlestick'>);
+  }
+
+  ngOnDestroy(): void {
+    this.clearChartAndSubscriptions();
+    this.destroy$.next();
+    this.destroy$.complete();
   }
 }

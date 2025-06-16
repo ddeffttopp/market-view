@@ -32,6 +32,15 @@ export class WebSocketService {
     const url = `wss://platform.fintacharts.com/api/streaming/ws/v1/realtime?token=${token}`;
     this.socket = new WebSocket(url);
 
+    this.initSocketHandlers(this.currentInstrumentId, provider)
+  }
+
+  private initSocketHandlers(instrumentId: string, provider: string) {
+    if (!this.socket) {
+      console.error('[WebSocket] Socket not initialized for handlers.');
+      return;
+    }
+
     this.socket.onopen = () => {
       const subscribeMessage = {
         type: 'l1-subscription',
